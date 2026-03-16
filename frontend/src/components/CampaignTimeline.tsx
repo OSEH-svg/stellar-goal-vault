@@ -1,0 +1,55 @@
+import { CampaignEvent } from "../types/campaign";
+
+interface CampaignTimelineProps {
+  history: CampaignEvent[];
+}
+
+function formatTimestamp(unixSeconds: number): string {
+  return new Date(unixSeconds * 1000).toLocaleString();
+}
+
+function describeEvent(event: CampaignEvent): string {
+  switch (event.eventType) {
+    case "created":
+      return "Campaign created";
+    case "pledged":
+      return "New pledge received";
+    case "claimed":
+      return "Creator claimed vault";
+    case "refunded":
+      return "Contributor refunded";
+    default:
+      return event.eventType;
+  }
+}
+
+export function CampaignTimeline({ history }: CampaignTimelineProps) {
+  return (
+    <section className="card">
+      <div className="section-heading">
+        <h2>Timeline</h2>
+        <p className="muted">Each action is stored locally so contributors can follow campaign activity.</p>
+      </div>
+
+      {history.length === 0 ? (
+        <div className="empty-state">Select a campaign to see lifecycle events.</div>
+      ) : (
+        <div className="timeline">
+          {history.map((event) => (
+            <article key={event.id} className="timeline-item">
+              <div className="timeline-dot" aria-hidden />
+              <div className="timeline-copy">
+                <strong>{describeEvent(event)}</strong>
+                <span className="muted">{formatTimestamp(event.timestamp)}</span>
+                <span className="muted">
+                  {event.actor ? `Actor: ${event.actor.slice(0, 10)}...` : "System event"}
+                  {typeof event.amount === "number" ? ` | Amount: ${event.amount}` : ""}
+                </span>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
