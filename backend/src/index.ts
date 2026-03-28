@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   addPledge,
   calculateProgress,
+  CampaignRecord,
   CampaignStatus,
   claimCampaign,
   createCampaign,
@@ -23,6 +24,7 @@ import {
   claimCampaignPayloadSchema,
   createCampaignPayloadSchema,
   createPledgePayloadSchema,
+  paginationSchema,
   refundPayloadSchema,
   zodIssuesToErrorMessage,
   zodIssuesToValidationIssues,
@@ -36,8 +38,9 @@ const port = Number(process.env.PORT ?? 3001);
 const CAMPAIGN_STATUSES: CampaignStatus[] = ["open", "funded", "claimed", "failed"];
 
 type CampaignListItem = ReturnType<typeof calculateProgress> extends infer Progress
-  ? ReturnType<typeof listCampaigns>[number] & { progress: Progress }
+  ? CampaignRecord & { progress: Progress }
   : never;
+
 
 // Initialize DB
 initCampaignStore();
@@ -121,15 +124,19 @@ export function normalizeStatusFilter(statusRaw: unknown): CampaignStatus | unde
 export function parseCampaignListFilters(query: {
   asset?: unknown;
   status?: unknown;
+  q?: unknown;
 }): {
   asset?: string;
   status?: CampaignStatus;
+  searchQuery?: string;
 } {
   return {
     asset: normalizeAssetFilter(query.asset),
     status: normalizeStatusFilter(query.status),
+    searchQuery: normalizeQueryValue(query.q),
   };
 }
+
 
 export function filterCampaignList(
   campaigns: CampaignListItem[],
@@ -160,10 +167,38 @@ app.get("/api/health", (_req: Request, res: Response) => {
 });
 
 app.get("/api/campaigns", (req: Request, res: Response) => {
+  const parsedPagination = paginationSchema.safeParse(req.query);
+  if (!parsedPagination.success) {
+    sendValidationError(parsedPagination.error.issues);
+    return;
+  }
 
+  const { page, limit } = parsedPagination.data;
+  const filters = parseCampaignListFilters(req.query);
 
-  res.json({ data });
+  const { campaigns, totalCount } = listCampaigns({
+    ...filters,
+    assetCode: filters.asset,
+    page,
+    limit,
+  });
+
+  const data: CampaignListItem[] = campaigns.map((campaign) => ({
+    ...campaign,
+    progress: calculateProgress(campaign),
+  }));
+
+  res.json({
+    data,
+    pagination: {
+      totalCount,
+      page,
+      limit,
+      totalPages: Math.ceil(totalCount / limit),
+    },
+  });
 });
+
 
 app.get("/api/campaigns/:id", (req: Request, res: Response) => {
   const parsedId = parseCampaignId(req.params.id);

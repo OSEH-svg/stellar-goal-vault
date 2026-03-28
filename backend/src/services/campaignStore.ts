@@ -186,29 +186,82 @@ export function calculateProgress(
 
 export interface ListCampaignsOptions {
   searchQuery?: string;
+  assetCode?: string;
+  status?: CampaignStatus;
+  page?: number;
+  limit?: number;
 }
 
-export function listCampaigns(options?: ListCampaignsOptions): CampaignRecord[] {
+export interface ListCampaignsResult {
+  campaigns: CampaignRecord[];
+  totalCount: number;
+}
+
+
+export function listCampaigns(options?: ListCampaignsOptions): ListCampaignsResult {
   const db = getDb();
   
-  let query = `SELECT * FROM campaigns`;
+  const page = options?.page ?? 1;
+  const limit = options?.limit ?? 10;
+  const offset = (page - 1) * limit;
+
+  let whereClauses: string[] = [];
   const params: any[] = [];
   
   if (options?.searchQuery && options.searchQuery.trim()) {
     const searchTerm = `%${options.searchQuery.trim().toLowerCase()}%`;
-    query += ` WHERE 
+    whereClauses.push(`(
       LOWER(id) LIKE ? OR 
       LOWER(title) LIKE ? OR 
-      LOWER(creator) LIKE ?`;
+      LOWER(creator) LIKE ?
+    )`);
     params.push(searchTerm, searchTerm, searchTerm);
   }
-  
-  query += ` ORDER BY created_at DESC`;
-  
-  const rows = db.prepare(query).all(...params) as CampaignRow[];
 
-  return rows.map(rowToCampaign);
+  if (options?.assetCode) {
+    whereClauses.push(`asset_code = ?`);
+    params.push(options.assetCode.toUpperCase());
+  }
+
+  if (options?.status) {
+    const now = Math.floor(Date.now() / 1000);
+    switch (options.status) {
+      case "claimed":
+        whereClauses.push(`claimed_at IS NOT NULL`);
+        break;
+      case "funded":
+        whereClauses.push(`claimed_at IS NULL AND pledged_amount >= target_amount`);
+        break;
+      case "failed":
+        whereClauses.push(`claimed_at IS NULL AND pledged_amount < target_amount AND deadline <= ?`);
+        params.push(now);
+        break;
+      case "open":
+        whereClauses.push(`claimed_at IS NULL AND pledged_amount < target_amount AND deadline > ?`);
+        params.push(now);
+        break;
+    }
+  }
+  
+  let baseQuery = `FROM campaigns`;
+
+  if (whereClauses.length > 0) {
+    baseQuery += ` WHERE ` + whereClauses.join(" AND ");
+  }
+
+  const countQuery = `SELECT COUNT(*) as total ${baseQuery}`;
+  const totalCount = (db.prepare(countQuery).get(...params) as { total: number }).total;
+
+  const dataQuery = `SELECT * ${baseQuery} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+  const rows = db.prepare(dataQuery).all(...params, limit, offset) as CampaignRow[];
+
+  return {
+    campaigns: rows.map(rowToCampaign),
+    totalCount,
+  };
 }
+
+
 
 export function getCampaign(campaignId: string): CampaignRecord | undefined {
   const db = getDb();
