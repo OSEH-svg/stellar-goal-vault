@@ -191,6 +191,31 @@ select {
   background: rgba(15, 23, 42, 0.7);
 }
 
+/* Field Error Styles */
+.field-group .input-error,
+.field-group input.input-error,
+.field-group textarea.input-error {
+  border-color: #f87171;
+  background: rgba(127, 29, 29, 0.1);
+}
+
+.field-group .input-error:focus,
+.field-group input.input-error:focus,
+.field-group textarea.input-error:focus {
+  border-color: #f87171;
+  box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.15);
+  background: rgba(127, 29, 29, 0.15);
+}
+
+.field-error {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.8125rem;
+  color: #f87171;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
 /* Buttons */
 .btn-primary,
 .btn-secondary,

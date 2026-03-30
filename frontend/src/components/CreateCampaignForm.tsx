@@ -1,6 +1,11 @@
 import { FormEvent, useState, useEffect } from "react";
 import { getAppConfig } from "../services/api";
 import { CreateCampaignPayload, ApiError } from "../types/campaign";
+import {
+  validateForm,
+  isFormValid,
+  FormErrors,
+} from "../utils/validation";
 
 interface CreateCampaignFormProps {
   onCreate: (payload: CreateCampaignPayload) => Promise<void>;
@@ -26,6 +31,7 @@ export function CreateCampaignForm({
 }: CreateCampaignFormProps) {
   const [values, setValues] = useState(INITIAL_VALUES);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<FormErrors>({});
 
   useEffect(() => {
     getAppConfig()
@@ -40,10 +46,32 @@ export function CreateCampaignForm({
 
   function update(field: keyof typeof INITIAL_VALUES, value: string) {
     setValues((current) => ({ ...current, [field]: value }));
+
+    // Validate field on change for real-time feedback
+    if (
+      field === "creator" ||
+      field === "title" ||
+      field === "description" ||
+      field === "targetAmount" ||
+      field === "deadlineHours"
+    ) {
+      const updatedValues = { ...values, [field]: value };
+      const newErrors = validateForm(updatedValues);
+      setValidationErrors(newErrors);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    // Validate form before submission
+    const errors = validateForm(values);
+    setValidationErrors(errors);
+
+    if (!isFormValid(errors)) {
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -65,6 +93,7 @@ export function CreateCampaignForm({
         ...INITIAL_VALUES,
         assetCode: allowedAssets[0] ?? INITIAL_VALUES.assetCode,
       });
+      setValidationErrors({});
     } finally {
       setIsSubmitting(false);
     }
@@ -89,8 +118,12 @@ export function CreateCampaignForm({
             value={values.creator}
             onChange={(event) => update("creator", event.target.value)}
             placeholder="G... creator public key"
+            className={validationErrors.creator ? "input-error" : ""}
             required
           />
+          {validationErrors.creator ? (
+            <span className="field-error">{validationErrors.creator}</span>
+          ) : null}
         </label>
 
         <label className="field-group">
@@ -102,8 +135,12 @@ export function CreateCampaignForm({
             placeholder="Stellar community design sprint"
             minLength={4}
             maxLength={80}
+            className={validationErrors.title ? "input-error" : ""}
             required
           />
+          {validationErrors.title ? (
+            <span className="field-error">{validationErrors.title}</span>
+          ) : null}
         </label>
 
         <label className="field-group">
@@ -115,8 +152,12 @@ export function CreateCampaignForm({
             rows={5}
             minLength={20}
             maxLength={500}
+            className={validationErrors.description ? "input-error" : ""}
             required
           />
+          {validationErrors.description ? (
+            <span className="field-error">{validationErrors.description}</span>
+          ) : null}
         </label>
 
         <div className="row">
@@ -143,8 +184,12 @@ export function CreateCampaignForm({
               step="0.01"
               value={values.targetAmount}
               onChange={(event) => update("targetAmount", event.target.value)}
+              className={validationErrors.targetAmount ? "input-error" : ""}
               required
             />
+            {validationErrors.targetAmount ? (
+              <span className="field-error">{validationErrors.targetAmount}</span>
+            ) : null}
           </label>
         </div>
 
@@ -156,8 +201,12 @@ export function CreateCampaignForm({
             step="1"
             value={values.deadlineHours}
             onChange={(event) => update("deadlineHours", event.target.value)}
+            className={validationErrors.deadlineHours ? "input-error" : ""}
             required
           />
+          {validationErrors.deadlineHours ? (
+            <span className="field-error">{validationErrors.deadlineHours}</span>
+          ) : null}
         </label>
 
         <div className="row">
@@ -203,7 +252,11 @@ export function CreateCampaignForm({
           </div>
         ) : null}
 
-        <button className="btn-primary" type="submit" disabled={isSubmitting}>
+        <button
+          className="btn-primary"
+          type="submit"
+          disabled={isSubmitting || !isFormValid(validationErrors)}
+        >
           {isSubmitting ? "Creating..." : "Create campaign"}
         </button>
       </form>
