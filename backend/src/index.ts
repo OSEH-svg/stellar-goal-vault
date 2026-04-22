@@ -1,8 +1,9 @@
 import cors from "cors";
 import "dotenv/config";
 import express, { Request, Response } from "express";
-import { config } from "./config";
+import { randomUUID } from "crypto";
 import { z } from "zod";
+import { config, walletIntegrationReady } from "./config";
 import {
   addPledge,
   calculateProgress,
@@ -13,43 +14,49 @@ import {
   getCampaignWithProgress,
   initCampaignStore,
   listCampaigns,
+  reconcileOnChainPledge,
   refundContributor,
 } from "./services/campaignStore";
-import { startEventIndexer } from "./services/eventIndexer";
+import { checkDbHealth } from "./services/db";
 import { getCampaignHistory } from "./services/eventHistory";
+import { startEventIndexer } from "./services/eventIndexer";
 import { fetchOpenIssues } from "./services/openIssues";
+import { ensureSorobanRefundConfig, verifyRefundTransaction } from "./services/sorobanRpc";
+import { AppError, ApiErrorResponse } from "./types/errors";
 import {
   campaignIdSchema,
   claimCampaignPayloadSchema,
   createCampaignPayloadSchema,
   createPledgePayloadSchema,
+  paginationSchema,
+  reconcilePledgePayloadSchema,
   refundPayloadSchema,
   zodIssuesToErrorMessage,
   zodIssuesToValidationIssues,
 } from "./validation/schemas";
-import { AppError, ApiErrorResponse } from "./types/errors";
-import { randomUUID } from "crypto";
 import { logError, logInfo, logRequest } from "./logger";
 
 export const app = express();
+
 const CAMPAIGN_STATUSES: CampaignStatus[] = ["open", "funded", "claimed", "failed"];
+const CONTRACT_AMOUNT_DECIMALS = Number(process.env.CONTRACT_AMOUNT_DECIMALS ?? 2);
 
-type CampaignListItem = ReturnType<typeof calculateProgress> extends infer Progress
-  ? ReturnType<typeof listCampaigns>[number] & { progress: Progress }
-  : never;
+type RequestWithId = Request & { requestId?: string };
+type CampaignListItem = ReturnType<typeof listCampaigns>["campaigns"][number] & {
+  progress: ReturnType<typeof calculateProgress>;
+};
 
-// Initialize DB
 initCampaignStore();
 
 app.use(
   cors({
     origin: config.corsAllowedOrigins,
     credentials: true,
-  })
+  }),
 );
 app.use(express.json());
 
-app.use((req: Request & { requestId?: string }, res: Response, next: express.NextFunction) => {
+app.use((req: RequestWithId, res: Response, next: express.NextFunction) => {
   req.requestId = randomUUID();
   const startedAt = process.hrtime.bigint();
 
@@ -71,7 +78,7 @@ app.use((req: Request & { requestId?: string }, res: Response, next: express.Nex
   next();
 });
 
-function sendValidationError(issues: z.ZodIssue[]) {
+function sendValidationError(issues: z.ZodIssue[]): never {
   throw new AppError(
     zodIssuesToErrorMessage(issues),
     400,
@@ -80,9 +87,9 @@ function sendValidationError(issues: z.ZodIssue[]) {
   );
 }
 
-function parseCampaignId(campaignIdRaw: unknown):
-  | { ok: true; value: string }
-  | { ok: false; issues: z.ZodIssue[] } {
+function parseCampaignId(
+  campaignIdRaw: unknown,
+): { ok: true; value: string } | { ok: false; issues: z.ZodIssue[] } {
   if (typeof campaignIdRaw !== "string") {
     return {
       ok: false,
@@ -136,13 +143,16 @@ export function normalizeStatusFilter(statusRaw: unknown): CampaignStatus | unde
 export function parseCampaignListFilters(query: {
   asset?: unknown;
   status?: unknown;
+  q?: unknown;
 }): {
   asset?: string;
   status?: CampaignStatus;
+  searchQuery?: string;
 } {
   return {
     asset: normalizeAssetFilter(query.asset),
     status: normalizeStatusFilter(query.status),
+    searchQuery: normalizeQueryValue(query.q),
   };
 }
 
@@ -162,34 +172,64 @@ export function filterCampaignList(
 }
 
 app.get("/api/health", (_req: Request, res: Response) => {
-  res.json({
+  const database = checkDbHealth();
+  const healthy = database.reachable;
+
+  res.status(healthy ? 200 : 503).json({
     service: "stellar-goal-vault-backend",
-    status: "ok",
+    status: healthy ? "ok" : "degraded",
     timestamp: new Date().toISOString(),
+    uptimeSeconds: Number(process.uptime().toFixed(3)),
+    database,
   });
 });
 
 app.get("/api/campaigns", (req: Request, res: Response) => {
-  const campaigns = listCampaigns().map((campaign) => ({
-    ...campaign,
-    progress: calculateProgress(campaign),
-  }));
+  const paginationResult = paginationSchema.safeParse({
+    page: req.query.page,
+    limit: req.query.limit,
+  });
+  if (!paginationResult.success) {
+    sendValidationError(paginationResult.error.issues);
+  }
+
+  const filters = parseCampaignListFilters({
+    asset: req.query.asset,
+    status: req.query.status,
+    q: req.query.q,
+  });
+  const { page, limit } = paginationResult.data;
+  const { campaigns, totalCount } = listCampaigns({
+    searchQuery: filters.searchQuery,
+    assetCode: filters.asset,
+    status: filters.status,
+    page,
+    limit,
+  });
+
   const data = filterCampaignList(
-    campaigns,
-    parseCampaignListFilters({
-      asset: req.query.asset,
-      status: req.query.status,
-    }),
+    campaigns.map((campaign) => ({
+      ...campaign,
+      progress: calculateProgress(campaign),
+    })),
+    filters,
   );
 
-  res.json({ data });
+  res.json({
+    data,
+    pagination: {
+      totalCount,
+      page,
+      limit,
+      totalPages: Math.ceil(totalCount / limit),
+    },
+  });
 });
 
 app.get("/api/campaigns/:id", (req: Request, res: Response) => {
   const parsedId = parseCampaignId(req.params.id);
   if (!parsedId.ok) {
     sendValidationError(parsedId.issues);
-    return;
   }
 
   const campaign = getCampaignWithProgress(parsedId.value);
@@ -204,7 +244,6 @@ app.post("/api/campaigns", (req: Request, res: Response) => {
   const parsedBody = createCampaignPayloadSchema.safeParse(req.body);
   if (!parsedBody.success) {
     sendValidationError(parsedBody.error.issues);
-    return;
   }
 
   if (parsedBody.data.deadline <= Math.floor(Date.now() / 1000)) {
@@ -219,50 +258,78 @@ app.post("/api/campaigns/:id/pledges", (req: Request, res: Response) => {
   const parsedId = parseCampaignId(req.params.id);
   if (!parsedId.ok) {
     sendValidationError(parsedId.issues);
-    return;
   }
 
   const parsedBody = createPledgePayloadSchema.safeParse(req.body);
   if (!parsedBody.success) {
     sendValidationError(parsedBody.error.issues);
-    return;
   }
 
   const campaign = addPledge(parsedId.value, parsedBody.data);
   res.status(201).json({ data: { ...campaign, progress: calculateProgress(campaign) } });
 });
 
+app.post("/api/campaigns/:id/pledges/reconcile", (req: Request, res: Response) => {
+  const parsedId = parseCampaignId(req.params.id);
+  if (!parsedId.ok) {
+    sendValidationError(parsedId.issues);
+  }
+
+  const parsedBody = reconcilePledgePayloadSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    sendValidationError(parsedBody.error.issues);
+  }
+
+  const campaign = reconcileOnChainPledge(parsedId.value, parsedBody.data);
+  res.status(201).json({
+    data: {
+      campaign: { ...campaign, progress: calculateProgress(campaign) },
+      transactionHash: parsedBody.data.transactionHash,
+    },
+  });
+});
+
 app.post("/api/campaigns/:id/claim", (req: Request, res: Response) => {
   const parsedId = parseCampaignId(req.params.id);
   if (!parsedId.ok) {
     sendValidationError(parsedId.issues);
-    return;
   }
 
   const parsedBody = claimCampaignPayloadSchema.safeParse(req.body);
   if (!parsedBody.success) {
     sendValidationError(parsedBody.error.issues);
-    return;
   }
 
-  const campaign = claimCampaign(parsedId.value, parsedBody.data.creator);
+  const campaign = claimCampaign(parsedId.value, {
+    creator: parsedBody.data.creator,
+    transactionHash: parsedBody.data.transactionHash,
+    confirmedAt: parsedBody.data.confirmedAt,
+  });
   res.json({ data: { ...campaign, progress: calculateProgress(campaign) } });
 });
 
-app.post("/api/campaigns/:id/refund", (req: Request, res: Response) => {
+app.post("/api/campaigns/:id/refund", async (req: Request, res: Response) => {
   const parsedId = parseCampaignId(req.params.id);
   if (!parsedId.ok) {
     sendValidationError(parsedId.issues);
-    return;
   }
 
   const parsedBody = refundPayloadSchema.safeParse(req.body);
   if (!parsedBody.success) {
     sendValidationError(parsedBody.error.issues);
-    return;
   }
 
-  const result = refundContributor(parsedId.value, parsedBody.data.contributor);
+  ensureSorobanRefundConfig();
+  const verified = await verifyRefundTransaction(parsedBody.data.soroban.txHash);
+  const result = refundContributor(parsedId.value, parsedBody.data.contributor, {
+    ...parsedBody.data.soroban,
+    txHash: verified.txHash,
+    ledger: verified.ledger ?? parsedBody.data.soroban.ledger,
+    createdAt: verified.createdAt ?? parsedBody.data.soroban.createdAt,
+    latestLedger: verified.latestLedger ?? parsedBody.data.soroban.latestLedger,
+    source: "soroban-contract",
+  });
+
   res.json({
     data: {
       ...result.campaign,
@@ -276,7 +343,6 @@ app.get("/api/campaigns/:id/history", (req: Request, res: Response) => {
   const parsedId = parseCampaignId(req.params.id);
   if (!parsedId.ok) {
     sendValidationError(parsedId.issues);
-    return;
   }
 
   const campaign = getCampaign(parsedId.value);
@@ -295,11 +361,22 @@ app.get("/api/open-issues", async (_req: Request, res: Response) => {
 app.get("/api/config", (_req: Request, res: Response) => {
   res.json({
     data: {
+      allowedAssets: config.allowedAssets,
+      soroban: {
+        enabled: walletIntegrationReady,
+        contractId: config.contractId || undefined,
+        networkPassphrase: config.sorobanNetworkPassphrase,
+        rpcUrl: config.sorobanRpcUrl,
+      },
+      sorobanRpcUrl: config.sorobanRpcUrl,
+      contractId: config.contractId,
+      networkPassphrase: config.sorobanNetworkPassphrase,
+      contractAmountDecimals: CONTRACT_AMOUNT_DECIMALS,
+      walletIntegrationReady,
     },
   });
 });
 
-// Global Error Handler
 app.use((err: any, req: Request, res: Response, _next: express.NextFunction) => {
   const statusCode = err instanceof AppError ? err.statusCode : (err.statusCode ?? 500);
   const code = err instanceof AppError ? err.code : (err.code ?? "INTERNAL_SERVER_ERROR");
@@ -308,7 +385,7 @@ app.use((err: any, req: Request, res: Response, _next: express.NextFunction) => 
     error: {
       code,
       message: err.message || "An unexpected error occurred",
-      requestId: (req as any).requestId,
+      requestId: (req as RequestWithId).requestId,
     },
   };
 
@@ -322,7 +399,7 @@ app.use((err: any, req: Request, res: Response, _next: express.NextFunction) => 
     err,
     {
       event: "request_error",
-      requestId: (req as any).requestId,
+      requestId: (req as RequestWithId).requestId,
       method: req.method,
       path: req.originalUrl || req.path,
       status: statusCode,

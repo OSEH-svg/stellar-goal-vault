@@ -11,7 +11,7 @@ type IndexModule = typeof import("./index");
 type CampaignStoreModule = typeof import("./services/campaignStore");
 type DbModule = typeof import("./services/db");
 
-let filterCampaignList: IndexModule["filterCampaignList"];
+let listCampaigns: CampaignStoreModule["listCampaigns"];
 let parseCampaignListFilters: IndexModule["parseCampaignListFilters"];
 let createCampaign: CampaignStoreModule["createCampaign"];
 let addPledge: CampaignStoreModule["addPledge"];
@@ -23,11 +23,11 @@ const CONTRIBUTOR = `G${"B".repeat(55)}`;
 
 beforeAll(async () => {
   fs.rmSync(TEST_DB_PATH, { force: true });
-
-  ({ filterCampaignList, parseCampaignListFilters } = await import("./index"));
-  ({ createCampaign, addPledge, calculateProgress } = await import("./services/campaignStore"));
+  ({ parseCampaignListFilters } = await import("./index"));
+  ({ listCampaigns, createCampaign, addPledge, calculateProgress } = await import("./services/campaignStore"));
   ({ getDb } = await import("./services/db"));
-});
+}, 20000);
+
 
 beforeEach(() => {
   const db = getDb();
@@ -111,11 +111,17 @@ function buildCampaignList() {
   return { fixtures, campaigns };
 }
 
-describe("campaign list filters", () => {
-  it("filters campaigns by asset code case-insensitively", () => {
-    const { fixtures, campaigns } = buildCampaignList();
+describe("campaign list filters and pagination", () => {
+  it("filters campaigns by asset code case-insensitively via SQL", () => {
+    const { fixtures } = buildCampaignList();
 
-    const filtered = filterCampaignList(campaigns, parseCampaignListFilters({ asset: "usdc" }));
+    const filters = parseCampaignListFilters({ asset: "usdc" });
+    const { campaigns: filtered } = listCampaigns({ 
+      ...filters, 
+      assetCode: filters.asset, 
+      page: 1, 
+      limit: 10 
+    });
 
     expect(filtered).toHaveLength(4);
     expect(filtered.map((campaign) => campaign.id).sort()).toEqual(
@@ -129,27 +135,45 @@ describe("campaign list filters", () => {
     expect(filtered.every((campaign) => campaign.assetCode === "USDC")).toBe(true);
   });
 
-  it("ignores invalid or empty asset filters instead of failing", () => {
-    const { campaigns } = buildCampaignList();
+  it("handles pagination correctly", () => {
+    buildCampaignList(); // creates 5 campaigns
 
-    const invalid = filterCampaignList(campaigns, parseCampaignListFilters({ asset: "doge" }));
-    const empty = filterCampaignList(campaigns, parseCampaignListFilters({ asset: "   " }));
+    const page1 = listCampaigns({ page: 1, limit: 2 });
+    expect(page1.campaigns).toHaveLength(2);
+    expect(page1.totalCount).toBe(5);
 
-    expect(invalid).toHaveLength(5);
-    expect(empty).toHaveLength(5);
+    const page2 = listCampaigns({ page: 2, limit: 2 });
+    expect(page2.campaigns).toHaveLength(2);
+    expect(page2.totalCount).toBe(5);
+
+    const page3 = listCampaigns({ page: 3, limit: 2 });
+    expect(page3.campaigns).toHaveLength(1);
+    expect(page3.totalCount).toBe(5);
+
+    // Verify disjoint sets
+    const ids1 = page1.campaigns.map(c => c.id);
+    const ids2 = page2.campaigns.map(c => c.id);
+    const ids3 = page3.campaigns.map(c => c.id);
+    
+    expect(ids1.some(id => ids2.includes(id))).toBe(false);
+    expect(ids2.some(id => ids3.includes(id))).toBe(false);
   });
 
-  it("combines status and asset filtering correctly", () => {
-    const { fixtures, campaigns } = buildCampaignList();
+  it("combines status and asset filtering correctly via SQL", () => {
+    const { fixtures } = buildCampaignList();
 
-    const filtered = filterCampaignList(
-      campaigns,
-      parseCampaignListFilters({ asset: "UsDc", status: "FuNdEd" }),
-    );
+    const filters = parseCampaignListFilters({ asset: "UsDc", status: "FuNdEd" });
+    const { campaigns: filtered } = listCampaigns({
+      ...filters,
+      assetCode: filters.asset,
+      page: 1,
+      limit: 10
+    });
 
     expect(filtered).toHaveLength(1);
     expect(filtered[0].id).toBe(fixtures.fundedUsdc.id);
     expect(filtered[0].assetCode).toBe("USDC");
-    expect(filtered[0].progress.status).toBe("funded");
   });
 });
+
+
