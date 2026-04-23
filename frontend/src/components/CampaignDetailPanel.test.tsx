@@ -30,7 +30,7 @@ const mockCampaign: Campaign = {
 };
 
 describe("CampaignDetailPanel", () => {
-  it("shows empty state when no campaign selected", () => {
+  it("shows empty state when no campaign selected",async () => {
     render(
       <CampaignDetailPanel
         campaign={null}
