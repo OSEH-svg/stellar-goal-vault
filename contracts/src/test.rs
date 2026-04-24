@@ -26,6 +26,7 @@ mod tests {
         });
     }
 
+
     #[test]
     fn test_claim_success() {
         let env = Env::default();
