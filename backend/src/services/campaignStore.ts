@@ -245,9 +245,10 @@ const MAX_CAMPAIGN_DURATION_SECONDS = 60 * 60 * 24 * 180;
 
 export function listCampaigns(options?: ListCampaignsOptions): ListCampaignsResult {
   const db = getDb();
+  const paginate = options?.page !== undefined && options?.limit !== undefined;
   const page = options?.page ?? 1;
   const limit = options?.limit ?? 10;
-  const offset = (page - 1) * limit;
+  const offset = paginate ? (page - 1) * limit : 0;
 
   const whereClauses: string[] = [];
   const params: any[] = [];
@@ -304,8 +305,14 @@ export function listCampaigns(options?: ListCampaignsOptions): ListCampaignsResu
   const countQuery = `SELECT COUNT(*) as total ${baseQuery}`;
   const totalCount = (db.prepare(countQuery).get(...params) as { total: number }).total;
 
-  const dataQuery = `SELECT * ${baseQuery} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
-  const rows = db.prepare(dataQuery).all(...params, limit, offset) as CampaignRow[];
+  const dataQuery = paginate
+    ? `SELECT * ${baseQuery} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    : `SELECT * ${baseQuery} ORDER BY created_at DESC`;
+  const rows = (
+    paginate
+      ? db.prepare(dataQuery).all(...params, limit, offset)
+      : db.prepare(dataQuery).all(...params)
+  ) as CampaignRow[];
 
   return {
     campaigns: rows.map(rowToCampaign),

@@ -345,6 +345,14 @@
                   "map": [
                     {
                       "key": {
+                        "symbol": "canceled"
+                      },
+                      "val": {
+                        "bool": false
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "claimed"
                       },
                       "val": {

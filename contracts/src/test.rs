@@ -181,11 +181,49 @@ mod tests {
         client.claim(&campaign_id, &creator);
     }
 
-
+    #[test]
+    fn test_get_campaign_count_tracks_creates() {
         let env = Env::default();
         env.mock_all_auths();
 
         let creator = Address::generate(&env);
+        let admin = Address::generate(&env);
+        let token = deploy_token(&env, &admin, &creator, 10_000);
+        let client = deploy_contract(&env);
 
+        assert_eq!(client.get_campaign_count(), 0);
+        assert_eq!(client.get_next_campaign_id(), 0);
+
+        let deadline = env.ledger().timestamp() + 1_000;
+        let meta = |s: &str| String::from_str(&env, s);
+
+        client.create_campaign(
+            &creator,
+            &token,
+            &100_i128,
+            &deadline,
+            &meta("c1"),
+        );
+        assert_eq!(client.get_campaign_count(), 1);
+        assert_eq!(client.get_next_campaign_id(), 1);
+
+        client.create_campaign(
+            &creator,
+            &token,
+            &200_i128,
+            &deadline,
+            &meta("c2"),
+        );
+        client.create_campaign(
+            &creator,
+            &token,
+            &300_i128,
+            &deadline,
+            &meta("c3"),
+        );
+
+        assert_eq!(client.get_campaign_count(), 3);
+        assert_eq!(client.get_next_campaign_id(), 3);
+        assert_eq!(client.get_campaign_count(), client.get_next_campaign_id());
     }
 }

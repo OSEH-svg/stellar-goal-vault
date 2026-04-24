@@ -15,6 +15,7 @@ import {
   getGlobalStats,
   initCampaignStore,
   listCampaigns,
+  type ListCampaignsOptions,
   softDeleteCampaign,
   reconcileOnChainPledge,
   refundContributor,
@@ -30,7 +31,7 @@ import {
   claimCampaignPayloadSchema,
   createCampaignPayloadSchema,
   createPledgePayloadSchema,
-  paginationSchema,
+  parseCampaignListPaginationQuery,
   reconcilePledgePayloadSchema,
   refundPayloadSchema,
   zodIssuesToErrorMessage,
@@ -229,12 +230,12 @@ app.get("/api/health", (_req: Request, res: Response) => {
 });
 
 app.get("/api/campaigns", (req: Request, res: Response) => {
-  const paginationResult = paginationSchema.safeParse({
+  const paginationResult = parseCampaignListPaginationQuery({
     page: req.query.page,
     limit: req.query.limit,
   });
-  if (!paginationResult.success) {
-    sendValidationError(paginationResult.error.issues);
+  if (!paginationResult.ok) {
+    sendValidationError(paginationResult.issues);
   }
 
   const filters = parseCampaignListFilters({
@@ -243,15 +244,19 @@ app.get("/api/campaigns", (req: Request, res: Response) => {
     q: req.query.q,
     includeDeleted: req.query.includeDeleted,
   });
-  const { page, limit } = paginationResult.data;
-  const { campaigns, totalCount } = listCampaigns({
+
+  const listOptions: ListCampaignsOptions = {
     searchQuery: filters.searchQuery,
     assetCode: filters.asset,
     status: filters.status,
     includeDeleted: filters.includeDeleted,
-    page,
-    limit,
-  });
+  };
+  if (paginationResult.page !== undefined) {
+    listOptions.page = paginationResult.page;
+    listOptions.limit = paginationResult.limit;
+  }
+
+  const { campaigns, totalCount } = listCampaigns(listOptions);
 
   const data = filterCampaignList(
     campaigns.map((campaign) => ({
@@ -261,13 +266,20 @@ app.get("/api/campaigns", (req: Request, res: Response) => {
     filters,
   );
 
+  const page = paginationResult.page ?? 1;
+  const limit = paginationResult.limit ?? totalCount;
+  const totalPages =
+    paginationResult.limit === undefined || limit <= 0
+      ? 1
+      : Math.max(1, Math.ceil(totalCount / limit));
+
   res.json({
     data,
     pagination: {
-      totalCount,
+      total: totalCount,
       page,
       limit,
-      totalPages: Math.ceil(totalCount / limit),
+      totalPages,
     },
   });
 });
@@ -354,7 +366,7 @@ app.post("/api/campaigns/:id/claim", applyRateLimit(WRITE_RATE_LIMIT_MAX_REQUEST
   res.json({ data: { ...campaign, progress: calculateProgress(campaign) } });
 });
 
-
+app.post("/api/campaigns/:id/refund", applyRateLimit(WRITE_RATE_LIMIT_MAX_REQUESTS), async (req: Request, res: Response) => {
   const parsedId = parseCampaignId(req.params.id);
   if (!parsedId.ok) {
     sendValidationError(parsedId.issues);

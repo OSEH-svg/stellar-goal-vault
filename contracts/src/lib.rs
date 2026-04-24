@@ -1,5 +1,12 @@
 #![no_std]
 
+//! Soroban contract for Stellar Goal Vault on-chain crowdfunding.
+//!
+//! Campaigns receive sequential ids starting at `1`. The persistent [`DataKey::NextCampaignId`]
+//! stores the most recently assigned id. [`StellarGoalVaultContract::get_next_campaign_id`] and
+//! [`StellarGoalVaultContract::get_campaign_count`] both read that counter: it equals the total
+//! number of campaigns created and is the id of the latest campaign.
+
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token::Client as TokenClient, Address, Env,
     String, Vec,
@@ -263,9 +270,6 @@ impl StellarGoalVaultContract {
         );
     }
 
-
-    }
-
     pub fn get_campaign(env: Env, campaign_id: u64) -> Campaign {
         read_campaign(&env, campaign_id)
     }
@@ -282,6 +286,12 @@ impl StellarGoalVaultContract {
             .persistent()
             .get(&DataKey::NextCampaignId)
             .unwrap_or(0)
+    }
+
+    /// Returns how many campaigns have been created. Uses the same counter as
+    /// [`Self::get_next_campaign_id`] ([`DataKey::NextCampaignId`]): sequential ids `1..=count`.
+    pub fn get_campaign_count(env: Env) -> u64 {
+        Self::get_next_campaign_id(env)
     }
 
     pub fn get_version(env: Env) -> String {
