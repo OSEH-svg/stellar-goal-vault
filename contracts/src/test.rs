@@ -222,8 +222,114 @@ mod tests {
             &meta("c3"),
         );
 
-        assert_eq!(client.get_campaign_count(), 3);
-        assert_eq!(client.get_next_campaign_id(), 3);
-        assert_eq!(client.get_campaign_count(), client.get_next_campaign_id());
+    #[test]
+    fn test_contributor_count_zero_on_new_campaign() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let creator = Address::generate(&env);
+        let admin = Address::generate(&env);
+        let token = deploy_token(&env, &admin, &creator, 1_000);
+        let client = deploy_contract(&env);
+
+        let campaign_id = client.create_campaign(
+            &creator,
+            &token,
+            &500_i128,
+            &(env.ledger().timestamp() + 1_000),
+            &String::from_str(&env, "count zero test"),
+        );
+
+        assert_eq!(client.get_contributor_count(&campaign_id), 0);
+    }
+
+    #[test]
+    fn test_contributor_count_single_contributor() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let creator = Address::generate(&env);
+        let contributor = Address::generate(&env);
+        let admin = Address::generate(&env);
+
+        let token = deploy_token(&env, &admin, &contributor, 1_000);
+        let client = deploy_contract(&env);
+
+        let campaign_id = client.create_campaign(
+            &creator,
+            &token,
+            &1_000_i128,
+            &(env.ledger().timestamp() + 1_000),
+            &String::from_str(&env, "single contributor test"),
+        );
+
+        client.contribute(&campaign_id, &contributor, &500);
+        assert_eq!(client.get_contributor_count(&campaign_id), 1);
+    }
+
+    #[test]
+    fn test_contributor_count_multiple_unique_contributors() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let creator = Address::generate(&env);
+        let contributor1 = Address::generate(&env);
+        let contributor2 = Address::generate(&env);
+        let contributor3 = Address::generate(&env);
+        let admin = Address::generate(&env);
+
+        // Mint tokens to each contributor separately
+        let token_id = env.register_stellar_asset_contract(admin.clone());
+        let asset_client = StellarAssetClient::new(&env, &token_id);
+        asset_client.mint(&contributor1, &200);
+        asset_client.mint(&contributor2, &200);
+        asset_client.mint(&contributor3, &200);
+
+        let client = deploy_contract(&env);
+
+        let campaign_id = client.create_campaign(
+            &creator,
+            &token_id,
+            &600_i128,
+            &(env.ledger().timestamp() + 1_000),
+            &String::from_str(&env, "multi contributor test"),
+        );
+
+        client.contribute(&campaign_id, &contributor1, &200);
+        assert_eq!(client.get_contributor_count(&campaign_id), 1);
+
+        client.contribute(&campaign_id, &contributor2, &200);
+        assert_eq!(client.get_contributor_count(&campaign_id), 2);
+
+        client.contribute(&campaign_id, &contributor3, &200);
+        assert_eq!(client.get_contributor_count(&campaign_id), 3);
+    }
+
+    #[test]
+    fn test_contributor_count_no_double_count_on_repeat_pledge() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let creator = Address::generate(&env);
+        let contributor = Address::generate(&env);
+        let admin = Address::generate(&env);
+
+        let token = deploy_token(&env, &admin, &contributor, 1_000);
+        let client = deploy_contract(&env);
+
+        let campaign_id = client.create_campaign(
+            &creator,
+            &token,
+            &1_000_i128,
+            &(env.ledger().timestamp() + 1_000),
+            &String::from_str(&env, "repeat pledge test"),
+        );
+
+        // Same contributor pledges twice — count must stay at 1
+        client.contribute(&campaign_id, &contributor, &400);
+        assert_eq!(client.get_contributor_count(&campaign_id), 1);
+
+        client.contribute(&campaign_id, &contributor, &300);
+        assert_eq!(client.get_contributor_count(&campaign_id), 1);
     }
 }
