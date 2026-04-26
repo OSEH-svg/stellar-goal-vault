@@ -449,23 +449,7 @@ export function createCampaign(input: CampaignInput): CampaignRecord {
   return campaign;
 }
 
-function checkContributorLimit(
-  campaign: CampaignRecord,
-  contributor: string,
-  amount: number,
-): void {
-  if (campaign.maxPerContributor === undefined) {
-    return;
-  }
 
-  const alreadyPledged = getContributorPledgedTotal(campaign.id, contributor);
-  if (alreadyPledged + amount > campaign.maxPerContributor) {
-    throw toServiceError(
-      `Contributor limit exceeded. Max: ${campaign.maxPerContributor}, Already pledged: ${alreadyPledged}, Attempted: ${amount}`,
-      400,
-      "CONTRIBUTOR_LIMIT_EXCEEDED",
-    );
-  }
 }
 
 export function addPledge(campaignId: string, input: PledgeInput): CampaignRecord {

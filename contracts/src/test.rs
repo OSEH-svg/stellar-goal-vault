@@ -139,3 +139,4 @@ fn test_unaccepted_token() {
     token2_admin.mint(&contributor, &500);
     client.contribute(&campaign_id, &contributor, &token2.address, &500);
 }
+

@@ -19,6 +19,7 @@ let createCampaign: CampaignStoreModule["createCampaign"];
 let initCampaignStore: CampaignStoreModule["initCampaignStore"];
 let listCampaigns: CampaignStoreModule["listCampaigns"];
 let reconcileOnChainPledge: CampaignStoreModule["reconcileOnChainPledge"];
+let updateCampaign: CampaignStoreModule["updateCampaign"];
 let getCampaign: CampaignStoreModule["getCampaign"];
 let getPledges: CampaignStoreModule["getPledges"];
 let getGlobalStats: CampaignStoreModule["getGlobalStats"];
@@ -40,6 +41,7 @@ beforeAll(async () => {
     initCampaignStore,
     listCampaigns,
     reconcileOnChainPledge,
+    updateCampaign,
     getCampaign,
     getPledges,
 
@@ -164,5 +166,4 @@ describe("on-chain pledge reconciliation", () => {
     ).toHaveLength(1);
   });
 });
-
 

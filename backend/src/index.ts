@@ -7,6 +7,8 @@ import { config, walletIntegrationReady } from "./config";
 import {
   addPledge,
   calculateProgress,
+  CampaignProgress,
+  CampaignRecord,
   CampaignStatus,
   claimCampaign,
   createCampaign,
@@ -19,13 +21,14 @@ import {
   softDeleteCampaign,
   reconcileOnChainPledge,
   refundContributor,
+  updateCampaign,
 } from "./services/campaignStore";
 import { checkDbHealth } from "./services/db";
 import { getCampaignHistory } from "./services/eventHistory";
 import { startEventIndexer } from "./services/eventIndexer";
 import { fetchOpenIssues } from "./services/openIssues";
 import { ensureSorobanRefundConfig, verifyRefundTransaction } from "./services/sorobanRpc";
-import { AppError, ApiErrorResponse } from "./types/errors";
+import { AppError, ApiErrorResponse, RequestWithId, CampaignListItem } from "./types/errors";
 import {
   campaignIdSchema,
   claimCampaignPayloadSchema,
@@ -34,13 +37,14 @@ import {
   parseCampaignListPaginationQuery,
   reconcilePledgePayloadSchema,
   refundPayloadSchema,
+  updateCampaignPayloadSchema,
   zodIssuesToErrorMessage,
   zodIssuesToValidationIssues,
 } from "./validation/schemas";
 import { logError, logInfo, logRequest } from "./logger";
 
 type RequestWithId = Request & { requestId?: string };
-type CampaignListItem = ReturnType<typeof import("./services/campaignStore").getCampaign> & { progress: ReturnType<typeof import("./services/campaignStore").calculateProgress> };
+
 
 export const app = express();
 
@@ -74,35 +78,7 @@ app.use(
 
 app.use(express.json());
 
-const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
 
-function applyRateLimit(maxRequests: number) {
-  return (req: Request, res: Response, next: express.NextFunction) => {
-    const key = `${req.ip}:${req.path}:${maxRequests}`;
-    const now = Date.now();
-    const current = rateLimitBuckets.get(key);
-
-    if (!current || now >= current.resetAt) {
-      rateLimitBuckets.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-      return next();
-    }
-
-    if (current.count >= maxRequests) {
-      const retryAfterSec = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
-      res.setHeader("Retry-After", String(retryAfterSec));
-      throw new AppError("Rate limit exceeded. Please retry shortly.", 429, "RATE_LIMITED");
-    }
-
-    current.count += 1;
-    rateLimitBuckets.set(key, current);
-    return next();
-  };
-}
-
-app.use(applyRateLimit(RATE_LIMIT_MAX_REQUESTS));
-
-app.use((req: RequestWithId, res: Response, next: express.NextFunction) => {
-  req.requestId = randomUUID();
   const startedAt = process.hrtime.bigint();
 
   res.on("finish", () => {
@@ -110,7 +86,7 @@ app.use((req: RequestWithId, res: Response, next: express.NextFunction) => {
 
     logRequest(
       {
-        requestId: req.requestId,
+        requestId: requestWithId.requestId,
         method: req.method,
         path: req.originalUrl || req.path,
         status: res.statusCode,
@@ -322,7 +298,7 @@ app.post("/api/campaigns", (req: Request, res: Response) => {
   res.status(201).json({ data: { ...campaign, progress: calculateProgress(campaign) } });
 });
 
-app.post("/api/campaigns/:id/pledges", applyRateLimit(WRITE_RATE_LIMIT_MAX_REQUESTS), (req: Request, res: Response) => {
+
   const parsedId = parseCampaignId(req.params.id);
   if (!parsedId.ok) {
     sendValidationError(parsedId.issues);
