@@ -7,6 +7,8 @@ import { config, walletIntegrationReady } from "./config";
 import {
   addPledge,
   calculateProgress,
+  CampaignProgress,
+  CampaignRecord,
   CampaignStatus,
   claimCampaign,
   createCampaign,
@@ -19,6 +21,7 @@ import {
   softDeleteCampaign,
   reconcileOnChainPledge,
   refundContributor,
+  updateCampaign,
 } from "./services/campaignStore";
 import { checkDbHealth } from "./services/db";
 import { getCampaignHistory } from "./services/eventHistory";
@@ -34,13 +37,14 @@ import {
   parseCampaignListPaginationQuery,
   reconcilePledgePayloadSchema,
   refundPayloadSchema,
+  updateCampaignPayloadSchema,
   zodIssuesToErrorMessage,
   zodIssuesToValidationIssues,
 } from "./validation/schemas";
 import { logError, logInfo, logRequest } from "./logger";
 
 type RequestWithId = Request & { requestId?: string };
-type CampaignListItem = ReturnType<typeof import("./services/campaignStore").getCampaign> & { progress: ReturnType<typeof import("./services/campaignStore").calculateProgress> };
+
 
 export const app = express();
 
@@ -322,7 +326,7 @@ app.post("/api/campaigns", (req: Request, res: Response) => {
   res.status(201).json({ data: { ...campaign, progress: calculateProgress(campaign) } });
 });
 
-app.post("/api/campaigns/:id/pledges", applyRateLimit(WRITE_RATE_LIMIT_MAX_REQUESTS), (req: Request, res: Response) => {
+
   const parsedId = parseCampaignId(req.params.id);
   if (!parsedId.ok) {
     sendValidationError(parsedId.issues);
