@@ -1,3 +1,4 @@
+fix-issue---#109
 #[cfg(test)]
 mod tests {
     use soroban_sdk::{
@@ -333,3 +334,4 @@ mod tests {
         assert_eq!(client.get_contributor_count(&campaign_id), 1);
     }
 }
+main
