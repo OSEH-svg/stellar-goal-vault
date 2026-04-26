@@ -24,6 +24,7 @@ import {
 import {
   submitFreighterClaim,
   submitFreighterPledge,
+  watchFreighterAccount,
 } from "./services/freighter";
 import { submitRefundTransaction } from "./services/soroban";
 import { useFreighter } from "./hooks/useFreighter";
@@ -309,6 +310,25 @@ function App() {
     }
   }
 
+  function handleDisconnectWallet() {
+    setConnectedWallet(null);
+    addToast("Wallet disconnected.", "success");
+  }
+
+  useEffect(() => {
+    if (!connectedWallet) return;
+    const stop = watchFreighterAccount((address) => {
+      if (address && address !== connectedWallet) {
+        setConnectedWallet(address);
+        addToast(`Switched to ${address.slice(0, 16)}...`, "success");
+      } else if (!address) {
+        setConnectedWallet(null);
+        addToast("Wallet disconnected.", "success");
+      }
+    });
+    return stop;
+  }, [connectedWallet]);
+
   async function handlePledge(campaignId: string, amount: number) {
     if (!connectedWallet) {
       addToast("Connect Freighter before submitting a pledge.", "error");
@@ -493,6 +513,7 @@ function handleSelect(campaignId: string) {
           isPledgePending={pendingPledgeCampaignId === selectedCampaignId}
           isLoading={isSelectedLoading || initialLoad}
           onConnectWallet={handleConnectWallet}
+          onDisconnectWallet={handleDisconnectWallet}
           onPledge={handlePledge}
           onClaim={handleClaim}
           onSoftDelete={handleSoftDelete}

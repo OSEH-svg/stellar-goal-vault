@@ -14,6 +14,7 @@ interface CampaignDetailPanelProps {
   isLoading?: boolean;
   isPledgePending?: boolean;
   onConnectWallet?: () => Promise<void>;
+  onDisconnectWallet?: () => void;
   onPledge?: (campaignId: string, amount: number) => Promise<void>;
   onClaim?: (campaign: Campaign) => Promise<void>;
   onSoftDelete?: (campaignId: string) => Promise<void>;
@@ -44,10 +45,11 @@ export function CampaignDetailPanel({
   isLoading = false,
   isPledgePending = false,
   onConnectWallet = async () => {},
+  onDisconnectWallet = () => {},
   onPledge = async () => {},
-  onClaim?: (campaign: Campaign) => Promise<void>;
-  onSoftDelete?: (campaignId: string) => Promise<void>;
-  onRefund?: (campaignId: string, contributor: string) => Promise<void>;
+  onClaim = async () => {},
+  onSoftDelete = async () => {},
+  onRefund = async () => {},
 }: CampaignDetailPanelProps) {
   const [pledgeAmount, setPledgeAmount] = useState("25");
   const [refundContributor, setRefundContributor] = useState("");
@@ -182,30 +184,12 @@ export function CampaignDetailPanel({
           <p className="muted">
             {connectedWallet
               ? `Connected to ${networkName(appConfig)}`
-              : `Connect Freighter for ${networkName(appConfig)}`}
+              : `Not connected — connect Freighter to take actions`}
           </p>
         </div>
         <div className="wallet-connected">
           {connectedWallet ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <AddressAvatar address={connectedWallet} size={28} />
-              <strong className="mono">{connectedWallet.slice(0, 16)}...</strong>
-              <CopyButton
-                value={connectedWallet}
-                ariaLabel="Copy connected wallet address"
-              />
-            </div>
-          ) : null}
-          <button
-            className="btn-ghost"
-            type="button"
-            onClick={() => {
-              void onConnectWallet();
-            }}
-            disabled={isSubmitting || isConnectingWallet}
-          >
-            {isConnectingWallet ? "Connecting..." : "Connect Freighter"}
-          </button>
+
         </div>
       </div>
 
